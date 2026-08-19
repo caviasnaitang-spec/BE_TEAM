@@ -1,11 +1,14 @@
 import os
 import uuid
 import logging
+import base64
+import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 
 import bcrypt
+import boto3
 import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
@@ -23,6 +26,33 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "10080"))
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
+
+# ---------- Cloudflare R2 ----------
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+R2_ENDPOINT = os.getenv("R2_ENDPOINT", "").strip()
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "").strip()
+
+if not all([
+    R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY,
+    R2_ENDPOINT,
+    R2_BUCKET_NAME,
+]):
+    raise RuntimeError(
+        "R2 configuration missing: "
+        "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, "
+        "R2_ENDPOINT, R2_BUCKET_NAME"
+    )
+
+r2_client = boto3.client(
+    "s3",
+    endpoint_url=R2_ENDPOINT,
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    region_name="auto",
+)
+
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -680,20 +710,62 @@ async def delete_visit(visit_id: str, user=Depends(current_user)):
 # ---------- Photos ----------
 @api_router.post("/visits/{visit_id}/photos", response_model=Photo, status_code=201)
 async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)):
-    visit = await db.visits.find_one({"id": visit_id, "owner_id": user["id"]}, {"_id": 0})
+    visit = await db.visits.find_one(
+        {"id": visit_id, "owner_id": user["id"]},
+        {"_id": 0},
+    )
+
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
+
     now = datetime.now(timezone.utc).isoformat()
+
     b64 = body.image_base64
+
     if b64.startswith("data:"):
         comma = b64.find(",")
         if comma != -1:
             b64 = b64[comma + 1:]
+
+    try:
+        image_bytes = base64.b64decode(b64, validate=True)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid image data",
+        )
+
+    max_size = 15 * 1024 * 1024
+
+    if len(image_bytes) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail="Image is too large. Maximum size is 15 MB.",
+        )
+
+    photo_id = str(uuid.uuid4())
+    object_key = f"visits/{visit_id}/{photo_id}.jpg"
+
+    try:
+        await asyncio.to_thread(
+            r2_client.put_object,
+            Bucket=R2_BUCKET_NAME,
+            Key=object_key,
+            Body=image_bytes,
+            ContentType="image/jpeg",
+        )
+    except Exception as exc:
+        logger.exception("R2 upload failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Photo upload failed",
+        ) from exc
+
     doc = {
-        "id": str(uuid.uuid4()),
+        "id": photo_id,
         "site_id": visit["site_id"],
         "visit_id": visit_id,
-        "image_base64": b64,
+        "r2_key": object_key,
         "latitude": body.latitude,
         "longitude": body.longitude,
         "accuracy": body.accuracy,
@@ -701,29 +773,138 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
         "note": (body.note or "").strip(),
         "created_at": now,
     }
-    await db.photos.insert_one(doc)
-    await db.visits.update_one({"id": visit_id}, {"$set": {"updated_at": now}})
-    await db.sites.update_one({"id": visit["site_id"]}, {"$set": {"updated_at": now}})
-    return Photo(**{k: v for k, v in doc.items() if k != "_id"})
+
+    try:
+        await db.photos.insert_one(doc)
+    except Exception as exc:
+        try:
+            await asyncio.to_thread(
+                r2_client.delete_object,
+                Bucket=R2_BUCKET_NAME,
+                Key=object_key,
+            )
+        except Exception:
+            logger.exception("Failed to clean up R2 object")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save photo record",
+        ) from exc
+
+    await db.visits.update_one(
+        {"id": visit_id},
+        {"$set": {"updated_at": now}},
+    )
+
+    await db.sites.update_one(
+        {"id": visit["site_id"]},
+        {"$set": {"updated_at": now}},
+    )
+
+    response_doc = {
+        **doc,
+        "image_base64": "data:image/jpeg;base64," + b64,
+    }
+
+    return Photo(**response_doc)
+
 
 @api_router.get("/visits/{visit_id}/photos", response_model=List[Photo])
 async def list_photos(visit_id: str, user=Depends(current_user)):
-    visit = await db.visits.find_one({"id": visit_id, "owner_id": user["id"]}, {"_id": 1})
+    visit = await db.visits.find_one(
+        {"id": visit_id, "owner_id": user["id"]},
+        {"_id": 1},
+    )
+
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
-    docs = await db.photos.find({"visit_id": visit_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return [Photo(**d) for d in docs]
+
+    docs = await db.photos.find(
+        {"visit_id": visit_id},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(1000)
+
+    result = []
+
+    for doc in docs:
+        if doc.get("r2_key"):
+            try:
+                def download_r2():
+                    obj = r2_client.get_object(
+                        Bucket=R2_BUCKET_NAME,
+                        Key=doc["r2_key"],
+                    )
+                    return obj["Body"].read()
+
+                image_bytes = await asyncio.to_thread(download_r2)
+
+                encoded = base64.b64encode(
+                    image_bytes
+                ).decode("utf-8")
+
+                doc["image_base64"] = (
+                    "data:image/jpeg;base64," + encoded
+                )
+
+            except Exception:
+                logger.exception(
+                    "Failed to read photo from R2: %s",
+                    doc.get("r2_key"),
+                )
+                continue
+
+        # Keep compatibility with old MongoDB photos.
+        if doc.get("image_base64"):
+            result.append(Photo(**doc))
+
+    return result
+
 
 @api_router.delete("/photos/{photo_id}", status_code=204)
 async def delete_photo(photo_id: str, user=Depends(current_user)):
-    photo = await db.photos.find_one({"id": photo_id}, {"_id": 0})
+    photo = await db.photos.find_one(
+        {"id": photo_id},
+        {"_id": 0},
+    )
+
     if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    site = await db.sites.find_one({"id": photo["site_id"], "owner_id": user["id"]}, {"_id": 1})
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found",
+        )
+
+    site = await db.sites.find_one(
+        {
+            "id": photo["site_id"],
+            "owner_id": user["id"],
+        },
+        {"_id": 1},
+    )
+
     if not site:
-        raise HTTPException(status_code=404, detail="Photo not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found",
+        )
+
+    if photo.get("r2_key"):
+        try:
+            await asyncio.to_thread(
+                r2_client.delete_object,
+                Bucket=R2_BUCKET_NAME,
+                Key=photo["r2_key"],
+            )
+        except Exception as exc:
+            logger.exception("R2 delete failed")
+            raise HTTPException(
+                status_code=502,
+                detail="Could not delete photo from storage",
+            ) from exc
+
     await db.photos.delete_one({"id": photo_id})
+
     return None
+
 
 @api_router.get("/")
 async def root():
