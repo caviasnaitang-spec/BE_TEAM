@@ -22,6 +22,7 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "10080"))
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -119,11 +120,22 @@ class PublicUser(BaseModel):
     id: str
     email: EmailStr
     name: Optional[str] = None
+    status: str = "approved"
+    is_admin: bool = False
 
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: PublicUser
+    status: str = "approved"
+
+class AdminUser(BaseModel):
+    id: str
+    email: EmailStr
+    name: Optional[str] = None
+    status: str
+    is_admin: bool = False
+    created_at: str
 
 class DistrictWithCount(BaseModel):
     key: str
@@ -223,7 +235,14 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 def user_public(doc: dict) -> PublicUser:
-    return PublicUser(id=doc["id"], email=doc["email"], name=doc.get("name"))
+    email = normalize_email(doc["email"])
+    return PublicUser(
+        id=doc["id"],
+        email=email,
+        name=doc.get("name"),
+        status=doc.get("status", "approved"),
+        is_admin=bool(ADMIN_EMAIL and email == ADMIN_EMAIL),
+    )
 
 def site_public(doc: dict, visit_count: int = 0, photo_count: int = 0) -> Site:
     return Site(
@@ -272,6 +291,8 @@ async def current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
     user = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not user:
         raise err
+    if user.get("status", "approved") != "approved":
+        raise HTTPException(status_code=403, detail="Account is not approved")
     return user
 
 async def _photo_counts_by_site(site_ids: List[str]) -> dict:
@@ -332,14 +353,15 @@ async def signup(body: SignupBody):
         "email": email,
         "name": body.name,
         "password_hash": hash_password(body.password),
+        "status": "pending",
         "created_at": now,
     }
     await db.users.insert_one(doc)
-    try:
-        await _seed_sites_for_user(user_id)
-    except Exception as e:
-        logging.warning("seed failed for %s: %s", user_id, e)
-    return AuthResponse(access_token=issue_token(user_id), user=user_public(doc))
+    return AuthResponse(
+        access_token="",
+        user=user_public(doc),
+        status="pending",
+    )
 
 @api_router.post("/auth/login", response_model=AuthResponse)
 async def login(body: LoginBody):
@@ -351,11 +373,91 @@ async def login(body: LoginBody):
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return AuthResponse(access_token=issue_token(user["id"]), user=user_public(user))
+
+    account_status = user.get("status", "approved")
+
+    if account_status == "pending":
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is awaiting administrator approval",
+        )
+
+    if account_status == "rejected":
+        raise HTTPException(
+            status_code=403,
+            detail="Your account registration was rejected",
+        )
+
+    return AuthResponse(
+        access_token=issue_token(user["id"]),
+        user=user_public(user),
+        status="approved",
+    )
 
 @api_router.get("/auth/me", response_model=PublicUser)
 async def me(user=Depends(current_user)):
     return user_public(user)
+
+# ---------- Administration ----------
+
+async def require_admin(user=Depends(current_user)):
+    if not ADMIN_EMAIL:
+        raise HTTPException(
+            status_code=503,
+            detail="ADMIN_EMAIL is not configured on the server",
+        )
+    if normalize_email(user["email"]) != ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return user
+
+@api_router.get("/admin/users", response_model=List[AdminUser])
+async def admin_users(user=Depends(require_admin)):
+    docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
+    return [
+        AdminUser(
+            id=d["id"],
+            email=d["email"],
+            name=d.get("name"),
+            status=d.get("status", "approved"),
+            is_admin=normalize_email(d["email"]) == ADMIN_EMAIL,
+            created_at=d["created_at"],
+        )
+        for d in docs
+    ]
+
+@api_router.patch("/admin/users/{user_id}/approve")
+async def admin_approve_user(user_id: str, user=Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"status": "approved"}}
+    )
+
+    try:
+        await _seed_sites_for_user(user_id)
+    except Exception as e:
+        logging.warning("seed failed for approved user %s: %s", user_id, e)
+
+    return {"message": "User approved"}
+
+@api_router.patch("/admin/users/{user_id}/reject")
+async def admin_reject_user(user_id: str, user=Depends(require_admin)):
+    if user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot reject your own account")
+
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"status": "rejected"}}
+    )
+
+    return {"message": "User rejected"}
 
 # ---------- Seed ----------
 @api_router.post("/seed/meghalaya")

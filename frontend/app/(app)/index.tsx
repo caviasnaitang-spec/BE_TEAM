@@ -1,10 +1,10 @@
-import { useCallback, useState, useMemo } from "react";
-import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from "react-native";
+import { useCallback, useState, useMemo, useEffect } from "react";
+import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator, RefreshControl, TextInput } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useSession } from "@/src/session";
-import { District } from "@/src/api";
+import { District, Site } from "@/src/api";
 import { DISTRICTS } from "@/src/districts";
 import { useTheme, spacing, sizes, type } from "@/src/theme";
 import SyncBar from "@/src/components/SyncBar";
@@ -18,6 +18,48 @@ export default function DistrictsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<Site[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const q = search.trim();
+
+    if (!q) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      if (!api) return;
+
+      setSearching(true);
+
+      try {
+        const results = await api.listSites({ q });
+
+        if (!cancelled) {
+          setSearchResults(results);
+        }
+      } catch {
+        if (!cancelled) {
+          setSearchResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [api, search]);
 
   const load = useCallback(async () => {
     if (!api) return; setError("");
@@ -49,7 +91,73 @@ export default function DistrictsScreen() {
         </View>
       </View>
 
-      {loading ? <View style={styles.centerFill}><ActivityIndicator color={colors.borderStrong} /></View> : (
+      <View style={[styles.searchWrap, { borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary }]}>
+        <Ionicons name="search" size={21} color={colors.muted} />
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="SEARCH SITE, PLOT OR LOCATION"
+          placeholderTextColor={colors.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.searchInput, { color: colors.onSurface }]}
+        />
+        {search ? (
+          <Pressable onPress={() => setSearch("")}>
+            <Ionicons name="close-circle" size={21} color={colors.muted} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {search.trim() ? (
+        searching ? (
+          <View style={styles.searchLoading}>
+            <ActivityIndicator color={colors.brand} />
+          </View>
+        ) : (
+          <FlatList
+            data={searchResults}
+            keyExtractor={site => site.id}
+            contentContainerStyle={{ paddingBottom: spacing.xxxl }}
+            ListEmptyComponent={
+              <View style={styles.noResults}>
+                <Ionicons name="search-outline" size={40} color={colors.muted} />
+                <Text style={[styles.noResultsTitle, { color: colors.onSurface }]}>NO SITES FOUND</Text>
+                <Text style={[styles.noResultsText, { color: colors.muted }]}>Try a different site name, plot number or location.</Text>
+              </View>
+            }
+            renderItem={({ item }) => {
+              const district = DISTRICTS.find(d => d.key === item.district)?.name || item.district;
+              return (
+                <Pressable
+                  onPress={() => router.push(`/site/${item.id}`)}
+                  style={({ pressed }) => [
+                    styles.searchResult,
+                    { borderBottomColor: colors.borderStrong },
+                    pressed && { backgroundColor: colors.surfaceSecondary },
+                  ]}
+                >
+                  <Ionicons name="location-outline" size={22} color={colors.brand} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.searchResultName, { color: colors.onSurface }]}>
+                      {item.name.toUpperCase()}
+                    </Text>
+                    <Text style={[styles.searchResultMeta, { color: colors.muted }]}>
+                      {district.toUpperCase()} · {item.plot_number}
+                      {item.location ? ` · ${item.location}` : ""}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={colors.onSurface} />
+                </Pressable>
+              );
+            }}
+          />
+        )
+      ) : loading ? (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={colors.borderStrong} />
+        </View>
+      ) : (
         <FlatList
           testID="districts-list"
           data={items}
@@ -91,6 +199,15 @@ const makeStyles = (colors: any) => StyleSheet.create({
   districtNumber: { fontFamily: type.mono, fontSize: sizes.xl, fontWeight: "900", minWidth: 32 },
   districtName: { fontSize: 18, fontWeight: "900", letterSpacing: -0.5 },
   districtMeta: { fontFamily: type.mono, fontSize: sizes.sm, marginTop: 4, letterSpacing: 1 },
+  searchWrap: { marginHorizontal: spacing.lg, marginTop: spacing.md, minHeight: 54, borderWidth: 2, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, gap: spacing.sm },
+  searchInput: { flex: 1, minHeight: 50, fontFamily: type.mono, fontSize: sizes.sm, letterSpacing: 0.5 },
+  searchLoading: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: spacing.xl },
+  searchResult: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, borderBottomWidth: 2 },
+  searchResultName: { fontSize: 17, fontWeight: "900" },
+  searchResultMeta: { fontFamily: type.mono, fontSize: sizes.sm - 1, marginTop: 4, letterSpacing: 0.5 },
+  noResults: { alignItems: "center", padding: spacing.xxxl, gap: spacing.sm },
+  noResultsTitle: { fontWeight: "900", fontSize: sizes.lg },
+  noResultsText: { fontFamily: type.mono, fontSize: sizes.sm, textAlign: "center" },
   footerErr: { padding: spacing.md, alignItems: "center" },
   footerErrText: { fontFamily: type.mono, fontSize: sizes.sm - 1, letterSpacing: 1 },
 });

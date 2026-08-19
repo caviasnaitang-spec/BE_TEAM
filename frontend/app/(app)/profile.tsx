@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useSession } from "@/src/session";
@@ -10,6 +11,7 @@ export default function ProfileScreen() {
   const { palette: colors, mode, toggle } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { session, signOut, online, pendingCount, syncNow, api } = useSession();
+  const router = useRouter();
   const [seeding, setSeeding] = useState(false);
   const [lastSeedResult, setLastSeedResult] = useState("");
 
@@ -75,6 +77,24 @@ export default function ProfileScreen() {
           </View>
           {seeding ? <ActivityIndicator color={colors.onSurface} /> : <Ionicons name="chevron-forward" size={20} color={colors.onSurface} />}
         </Pressable>
+
+        {session?.user.is_admin ? (
+          <Pressable
+            onPress={() => router.push("/admin/users" as any)}
+            style={({ pressed }) => [
+              styles.actionRow,
+              { borderColor: colors.brand, backgroundColor: colors.surfaceSecondary },
+              pressed && { opacity: 0.75 },
+            ]}
+          >
+            <Ionicons name="people-outline" size={22} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.rowTitle, { color: colors.onSurface }]}>USER APPROVALS</Text>
+              <Text style={[styles.rowSub, { color: colors.muted }]}>Review and approve registrations</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.brand} />
+          </Pressable>
+        ) : null}
 
         <View style={[styles.listRow, { borderColor: colors.borderStrong }]}>
           <Ionicons name="shield-checkmark-outline" size={22} color={colors.onSurface} />

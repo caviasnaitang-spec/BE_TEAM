@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { CameraView, useCameraPermissions, CameraType } from "expo-camera";
 import * as Location from "expo-location";
 import ViewShot, { captureRef } from "react-native-view-shot";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -77,7 +77,7 @@ export default function CameraScreen() {
   useEffect(() => { if (!capturedUri) return; const t = setTimeout(() => { finalizeUpload(); }, 300); return () => clearTimeout(t); }, [capturedUri, finalizeUpload]);
 
   if (!cameraPerm) return <View style={styles.blackFill}><ActivityIndicator color="#fff" /></View>;
-  if (!cameraPerm.granted) return <SafeAreaView style={[styles.safe, { backgroundColor: colors.surface }]}><View style={styles.permWrap}><Ionicons name="camera-off-outline" size={48} color={colors.onSurface} /><Text style={[styles.permTitle, { color: colors.onSurface }]}>CAMERA PERMISSION REQUIRED</Text><Text style={[styles.permBody, { color: colors.muted }]}>We need camera access to capture site photos.</Text><Pressable style={[styles.permBtn, { backgroundColor: colors.brand }]} onPress={() => requestCameraPerm()}><Text style={[styles.permBtnText, { color: colors.onBrand }]}>GRANT ACCESS</Text></Pressable><Pressable style={[styles.permBtnGhost, { borderColor: colors.borderStrong }]} onPress={() => router.back()}><Text style={[styles.permBtnGhostText, { color: colors.onSurface }]}>CANCEL</Text></Pressable></View></SafeAreaView>;
+  if (!cameraPerm.granted) return <SafeAreaView style={[styles.safe, { backgroundColor: colors.surface }]}><View style={styles.permWrap}><Ionicons name="camera-outline" size={48} color={colors.onSurface} /><Text style={[styles.permTitle, { color: colors.onSurface }]}>CAMERA PERMISSION REQUIRED</Text><Text style={[styles.permBody, { color: colors.muted }]}>We need camera access to capture site photos.</Text><Pressable style={[styles.permBtn, { backgroundColor: colors.brand }]} onPress={() => requestCameraPerm()}><Text style={[styles.permBtnText, { color: colors.onBrand }]}>GRANT ACCESS</Text></Pressable><Pressable style={[styles.permBtnGhost, { borderColor: colors.borderStrong }]} onPress={() => router.back()}><Text style={[styles.permBtnGhostText, { color: colors.onSurface }]}>CANCEL</Text></Pressable></View></SafeAreaView>;
 
   const dateStr = formatDate(now), timeStr = formatTime(now);
   const gpsStr = locStatus === "denied" ? "GPS PERMISSION DENIED" : !location ? "GPS · SEARCHING…" : `LAT ${formatCoord(location.latitude)}  LON ${formatCoord(location.longitude)}${location.accuracy ? `  ±${Math.round(location.accuracy)}M` : ""}`;

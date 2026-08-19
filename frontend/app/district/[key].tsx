@@ -118,4 +118,22 @@ const makeStyles = (colors: any) => StyleSheet.create({
   emptyBody: { fontFamily: type.mono, textAlign: "center" },
   emptyBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, marginTop: spacing.sm },
   emptyBtnText: { fontFamily: type.mono, fontWeight: "800", letterSpacing: 1 },
+  statusCompleted: {
+    borderWidth: 2,
+  },
+
+  statusActive: {
+    borderWidth: 2,
+  },
+
+  statusCompletedText: {
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  statusActiveText: {
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
 });

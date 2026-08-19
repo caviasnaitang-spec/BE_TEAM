@@ -180,4 +180,12 @@ const makeStyles = (colors: any) => StyleSheet.create({
   input: { borderWidth: 2, paddingHorizontal: spacing.md, paddingVertical: 14, fontSize: sizes.base, fontFamily: type.mono },
   primaryBtn: { paddingVertical: 16, alignItems: "center", minHeight: 56, marginTop: spacing.sm },
   primaryBtnText: { fontWeight: "900", letterSpacing: 1, fontSize: sizes.base },
+  statusBtnActive: {
+    borderWidth: 2,
+  },
+
+  statusBtnCompleted: {
+    borderWidth: 2,
+  },
+
 });

@@ -6,8 +6,8 @@ const RAW_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
 const TOKEN_KEY = "fm_auth_token";
 
-export type User = { id: string; email: string; name?: string | null };
-export type AuthResponse = { access_token: string; token_type: string; user: User };
+export type User = { id: string; email: string; name?: string | null; status?: string; is_admin?: boolean };
+export type AuthResponse = { access_token: string; token_type: string; user: User; status?: string };
 export type District = { key: string; name: string; site_count: number; active_count: number; completed_count: number };
 export type Site = { id: string; name: string; plot_number: string; district: string; location: string; status: "Active" | "Completed"; owner_id: string; visit_count: number; photo_count: number; created_at: string; updated_at: string; _pending?: boolean };
 export type Visit = { id: string; site_id: string; owner_id: string; sequence: number; title: string; note: string; progress_pct: number | null; issues: string; recommendations: string; photo_count: number; created_at: string; updated_at: string; _pending?: boolean };
@@ -63,6 +63,9 @@ export const raw = {
   listPhotos: (token: string, visitId: string) => request<Photo[]>(`/api/visits/${visitId}/photos`, {}, token),
   addPhoto: (token: string, visitId: string, body: any) => request<Photo>(`/api/visits/${visitId}/photos`, { method: "POST", body: JSON.stringify(body) }, token),
   deletePhoto: (token: string, photoId: string) => request<null>(`/api/photos/${photoId}`, { method: "DELETE" }, token),
+  adminUsers: (token: string) => request<any[]>(`/api/admin/users`, {}, token),
+  adminApproveUser: (token: string, userId: string) => request<any>(`/api/admin/users/${userId}/approve`, { method: "PATCH" }, token),
+  adminRejectUser: (token: string, userId: string) => request<any>(`/api/admin/users/${userId}/reject`, { method: "PATCH" }, token),
 };
 
 export function cacheKeys(userId: string) {
@@ -90,7 +93,10 @@ export function makeApi(token: string, userId: string) {
 
   return {
     listDistricts: () => fetchAndCache(() => raw.listDistricts(token), K.districts, [] as any),
-    listSites: (params: any = {}) => fetchAndCache(() => raw.listSites(token, params), K.sites(params.district), [] as any),
+    listSites: (params: any = {}) =>
+      params.q
+        ? raw.listSites(token, params)
+        : fetchAndCache(() => raw.listSites(token, params), K.sites(params.district), [] as any),
     getSite: (id: string) => fetchAndCache(() => raw.getSite(token, id), K.site(id)),
     createSite: async (body: any) => {
       if (isOnline()) {
@@ -184,6 +190,22 @@ export function makeApi(token: string, userId: string) {
       await queuePush({ kind: "add-photo", localId, visitId, siteId: siteId || "", body, createdAt: now });
       return optimistic;
     },
+    deletePhoto: async (photoId: string, visitId: string) => {
+      if (!isOnline()) {
+        throw new Error("PHOTO DELETION REQUIRES AN INTERNET CONNECTION");
+      }
+
+      await raw.deletePhoto(token, photoId);
+
+      const list = (await cacheGet<Photo[]>(K.visitPhotos(visitId))) || [];
+      await cacheSet(
+        K.visitPhotos(visitId),
+        list.filter(photo => photo.id !== photoId)
+      );
+
+      notifyChange();
+      return true;
+    },
     seedMeghalaya: async () => {
       const res = await raw.seedMeghalaya(token);
       await cacheDelete(K.districts);
@@ -191,6 +213,10 @@ export function makeApi(token: string, userId: string) {
       notifyChange();
       return res;
     },
+    adminUsers: () => raw.adminUsers(token),
+    adminApproveUser: (userId: string) => raw.adminApproveUser(token, userId),
+    adminRejectUser: (userId: string) => raw.adminRejectUser(token, userId),
+
     _adapters: {
       createSite: (body: any) => raw.createSite(token, body),
       updateSite: (id: string, body: any) => raw.updateSite(token, id, body),

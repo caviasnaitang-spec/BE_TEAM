@@ -130,10 +130,38 @@ export default function VisitDetailScreen() {
       </ScrollView>
 
       <View style={[styles.captureBarWrap, { borderTopColor: colors.borderStrong, backgroundColor: colors.surface }]}>
-        <Pressable onPress={() => router.push(`/site/${siteId}/visit/${visitId}/camera`)} style={({ pressed }) => [styles.captureBar, { backgroundColor: colors.brand }, pressed && { backgroundColor: "#CC4400" }]}>
-          <Ionicons name="camera" size={22} color={colors.onBrand} />
-          <Text style={[styles.captureBarText, { color: colors.onBrand }]}>CAPTURE PHOTO →</Text>
-        </Pressable>
+        <View style={styles.photoActions}>
+          <Pressable
+            onPress={() => router.push(`/site/${siteId}/visit/${visitId}/camera`)}
+            style={({ pressed }) => [
+              styles.captureBar,
+              { backgroundColor: colors.brand },
+              pressed && { opacity: 0.75 },
+            ]}
+          >
+            <Ionicons name="camera" size={21} color={colors.onBrand} />
+            <Text style={[styles.captureBarText, { color: colors.onBrand }]}>
+              TAKE PHOTO
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push(`/site/${siteId}/visit/${visitId}/gallery`)}
+            style={({ pressed }) => [
+              styles.captureBar,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.borderStrong,
+              },
+              pressed && { opacity: 0.75 },
+            ]}
+          >
+            <Ionicons name="images" size={21} color={colors.onSurface} />
+            <Text style={[styles.captureBarText, { color: colors.onSurface }]}>
+              GALLERY
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Photo viewer modal */}
@@ -221,8 +249,9 @@ const makeStyles = (colors: any) => StyleSheet.create({
   tilePendingBadge: { position: "absolute", bottom: 6, left: 6, paddingHorizontal: 6, paddingVertical: 2, flexDirection: "row", alignItems: "center", gap: 4 },
   tilePendingText: { fontFamily: type.mono, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   captureBarWrap: { position: "absolute", bottom: 0, left: 0, right: 0, padding: spacing.md, borderTopWidth: 2 },
-  captureBar: { paddingVertical: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 56 },
-  captureBarText: { fontWeight: "900", letterSpacing: 1, fontSize: sizes.base },
+  photoActions: { flexDirection: "row", gap: spacing.sm },
+  captureBar: { flex: 1, paddingVertical: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, minHeight: 56, borderWidth: 2 },
+  captureBarText: { fontWeight: "900", letterSpacing: 1, fontSize: sizes.sm },
   viewerBackdrop: { flex: 1, alignItems: "center", justifyContent: "center" },
   viewerImg: { width: "100%", height: "100%" },
   viewerClose: { position: "absolute", top: 40, right: 16, zIndex: 10, padding: 8 },

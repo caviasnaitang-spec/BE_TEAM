@@ -22,9 +22,10 @@ function AuthGate() {
     const inApp = segments[0] === "(app)";
     const inSiteRoute = segments[0] === "site";
     const inDistrictRoute = segments[0] === "district";
-    if (!session && (inApp || inSiteRoute || inDistrictRoute)) {
+    const inAdminRoute = segments[0] === "admin";
+    if (!session && (inApp || inSiteRoute || inDistrictRoute || inAdminRoute)) {
       router.replace("/");
-    } else if (session && !inApp && !inSiteRoute && !inDistrictRoute) {
+    } else if (session && !inApp && !inSiteRoute && !inDistrictRoute && !inAdminRoute) {
       router.replace("/(app)");
     }
   }, [session, loading, segments, router]);
@@ -46,6 +47,7 @@ function AuthGate() {
         <Stack.Screen name="(app)" />
         <Stack.Screen name="district/[key]" />
         <Stack.Screen name="site/[id]/index" />
+        <Stack.Screen name="admin/users" />
         <Stack.Screen name="site/[id]/visit/[visitId]/index" />
         <Stack.Screen name="site/[id]/visit/[visitId]/camera" options={{ presentation: "fullScreenModal" }} />
       </Stack>

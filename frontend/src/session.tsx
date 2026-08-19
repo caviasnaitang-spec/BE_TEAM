@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { AppState } from "react-native";
-import { raw, readToken, writeToken, User, makeApi, OfflineApi, cacheKeys, cacheGet, cacheSet, cacheDelete, cacheClearAllForUser } from "./api";
-import { startConnectivity, stopConnectivity, drainQueue, queueRead, subscribe, isOnline } from "./offline";
+import { raw, readToken, writeToken, User, makeApi, OfflineApi, cacheKeys } from "./api";
+import { startConnectivity, stopConnectivity, drainQueue, queueRead, subscribe, isOnline, cacheGet, cacheSet, cacheDelete, cacheClearAllForUser } from "./offline";
 
 type Session = { token: string; user: User } | null;
 type Ctx = {
@@ -80,7 +80,15 @@ export function SessionProvider({ children }: React.PropsWithChildren) {
   const value: Ctx = {
     session, loading, online, pendingCount, api, syncNow,
     signIn: async (email, password) => { const result = await raw.login(email, password); await establish(result); },
-    signUp: async (email, password, name) => { const result = await raw.signup(email, password, name); await establish(result); },
+    signUp: async (email, password, name) => {
+      const result = await raw.signup(email, password, name);
+
+      if (!result.access_token || result.status === "pending") {
+        throw new Error("ACCOUNT CREATED. YOUR REGISTRATION IS AWAITING ADMINISTRATOR APPROVAL.");
+      }
+
+      await establish(result);
+    },
     signOut: async () => { if (session) await cacheClearAllForUser(session.user.id); await writeToken(null); setSession(null); },
   };
 
