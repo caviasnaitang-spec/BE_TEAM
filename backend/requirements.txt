@@ -11,3 +11,4 @@ python-jose>=3.3.0
 requests>=2.31.0
 pytest>=8.0.0
 pytest-xdist>=3.8.0
+email-validator
