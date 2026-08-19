@@ -32,6 +32,7 @@ export default function CameraScreen() {
   const [now, setNow] = useState<Date>(new Date());
   const [busy, setBusy] = useState(false);
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [capturedBase64, setCapturedBase64] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const cameraRef = useRef<CameraView>(null);
@@ -52,27 +53,83 @@ export default function CameraScreen() {
 
   const captureAndCompose = useCallback(async () => {
     if (!cameraRef.current || busy) return;
-    setBusy(true); setError("");
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); const photo = await cameraRef.current.takePictureAsync({ quality: 0.7, skipProcessing: true }); if (!photo?.uri) throw new Error("Camera returned no image"); setCapturedUri(photo.uri); }
-    catch (e: any) { setError(e?.message || "Capture failed"); setBusy(false); }
+    setBusy(true);
+    setError("");
+
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.7,
+        skipProcessing: true,
+        ...(Platform.OS === "web" ? { base64: true } : {}),
+      });
+
+      if (!photo?.uri) throw new Error("Camera returned no image");
+
+      if (Platform.OS === "web") {
+        if (!photo.base64) throw new Error("Camera did not return image data");
+        setCapturedBase64(photo.base64);
+      }
+
+      setCapturedUri(photo.uri);
+    } catch (e: any) {
+      setError(e?.message || "Capture failed");
+      setBusy(false);
+    }
   }, [busy]);
 
   const finalizeUpload = useCallback(async () => {
-    if (!composeRef.current || !api || !visitId || !capturedUri) return;
+    if (!api || !visitId || !capturedUri) return;
+
     try {
-      const uri = await captureRef(composeRef, { format: "jpg", quality: 0.7, result: "tmpfile" });
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      let base64: string;
+
+      if (Platform.OS === "web") {
+        // Browser camera already provides base64.
+        // Do NOT use react-native-view-shot/captureRef on web.
+        if (!capturedBase64) throw new Error("Captured image data is missing");
+        base64 = capturedBase64;
+      } else {
+        if (!composeRef.current) throw new Error("Photo composition view is unavailable");
+
+        const uri = await captureRef(composeRef, {
+          format: "jpg",
+          quality: 0.7,
+          result: "tmpfile",
+        });
+
+        base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
       const capturedAt = new Date().toISOString();
-      await api.addPhoto(visitId, { image_base64: base64, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null, accuracy: location?.accuracy ?? null, captured_at: capturedAt }, siteId);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      await api.addPhoto(visitId, {
+        image_base64: base64,
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+        accuracy: location?.accuracy ?? null,
+        captured_at: capturedAt,
+      }, siteId);
+
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
+      ).catch(() => {});
+
       router.back();
     } catch (e: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Error
+      ).catch(() => {});
+
       setError(e?.message || "Upload failed");
       setBusy(false);
       setCapturedUri(null);
+      setCapturedBase64(null);
     }
-  }, [api, visitId, siteId, capturedUri, location, router]);
+  }, [api, visitId, siteId, capturedUri, capturedBase64, location, router]);
 
   useEffect(() => { if (!capturedUri) return; const t = setTimeout(() => { finalizeUpload(); }, 300); return () => clearTimeout(t); }, [capturedUri, finalizeUpload]);
 

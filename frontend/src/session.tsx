@@ -1,9 +1,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { AppState } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { raw, readToken, writeToken, User, makeApi, OfflineApi, cacheKeys } from "./api";
 import { startConnectivity, stopConnectivity, drainQueue, queueRead, subscribe, isOnline, cacheGet, cacheSet, cacheDelete, cacheClearAllForUser } from "./offline";
 
 type Session = { token: string; user: User } | null;
+
+const CACHED_USER_KEY = "fm_cached_user";
 type Ctx = {
   session: Session; loading: boolean; online: boolean; pendingCount: number;
   api: OfflineApi | null; syncNow: () => Promise<void>;
@@ -54,9 +57,35 @@ export function SessionProvider({ children }: React.PropsWithChildren) {
   useEffect(() => {
     (async () => {
       const token = await readToken();
+
       if (token) {
-        try { const user = await raw.me(token); setSession({ token, user }); } catch { await writeToken(null); }
+        try {
+          // Try the backend first when online.
+          const user = await raw.me(token);
+
+          // Keep a local copy so the app can start offline later.
+          await AsyncStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+
+          setSession({ token, user });
+        } catch {
+          // Backend unavailable: use the previously cached user.
+          try {
+            const cached = await AsyncStorage.getItem(CACHED_USER_KEY);
+
+            if (cached) {
+              const user = JSON.parse(cached) as User;
+              setSession({ token, user });
+            } else {
+              // No cached user means this device has never successfully
+              // completed a login, so normal login is still required.
+              await writeToken(null);
+            }
+          } catch {
+            await writeToken(null);
+          }
+        }
       }
+
       setLoading(false);
     })();
   }, []);
@@ -74,6 +103,7 @@ export function SessionProvider({ children }: React.PropsWithChildren) {
 
   const establish = useCallback(async (result: { access_token: string; user: User }) => {
     await writeToken(result.access_token);
+    await AsyncStorage.setItem(CACHED_USER_KEY, JSON.stringify(result.user));
     setSession({ token: result.access_token, user: result.user });
   }, []);
 
