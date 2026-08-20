@@ -14,3 +14,4 @@ pytest-xdist>=3.8.0
 email-validator
 boto3
 openai==3.3.1
+google-genai

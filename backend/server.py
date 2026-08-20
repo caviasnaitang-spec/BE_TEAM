@@ -11,7 +11,8 @@ from typing import Annotated, List, Optional
 import bcrypt
 import boto3
 import jwt
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
@@ -19,8 +20,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -735,10 +736,10 @@ async def generate_ai_report(
     body: AIReportRequest,
     user=Depends(current_user),
 ):
-    if not openai_client:
+    if not gemini_client:
         raise HTTPException(
             status_code=503,
-            detail="AI report assistant is not configured",
+            detail="Gemini AI report assistant is not configured",
         )
 
     # Visits are shared across the FieldMonitor team.
@@ -794,12 +795,15 @@ ROUGH RECOMMENDATIONS:
 
     try:
         response = await asyncio.to_thread(
-            openai_client.responses.create,
-            model="gpt-5.6-luna",
-            input=prompt,
+            gemini_client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
         )
 
-        text = (response.output_text or "").strip()
+        text = (response.text or "").strip()
 
         if not text:
             raise ValueError("AI returned an empty response")
