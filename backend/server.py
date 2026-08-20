@@ -493,13 +493,13 @@ async def admin_reject_user(user_id: str, user=Depends(require_admin)):
 @api_router.post("/seed/meghalaya")
 async def seed_meghalaya(user=Depends(current_user)):
     inserted = await _seed_sites_for_user(user["id"])
-    return {"inserted": inserted, "total": await db.sites.count_documents({"owner_id": user["id"]})}
+    return {"inserted": inserted, "total": await db.sites.count_documents({})}
 
 # ---------- Districts ----------
 @api_router.get("/districts", response_model=List[DistrictWithCount])
 async def list_districts(user=Depends(current_user)):
     pipeline = [
-        {"$match": {"owner_id": user["id"]}},
+        {"$match": {}},
         {
             "$group": {
                 "_id": "$district",
@@ -556,7 +556,7 @@ async def list_sites(
     status_filter: Optional[str] = Query(default=None, alias="status"),
     district: Optional[str] = Query(default=None),
 ):
-    query = {"owner_id": user["id"]}
+    query = {}
     if status_filter in ("Active", "Completed"):
         query["status"] = status_filter
     if district:
@@ -577,7 +577,7 @@ async def list_sites(
 
 @api_router.get("/sites/{site_id}", response_model=Site)
 async def get_site(site_id: str, user=Depends(current_user)):
-    doc = await db.sites.find_one({"id": site_id, "owner_id": user["id"]}, {"_id": 0})
+    doc = await db.sites.find_one({"id": site_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Site not found")
     v = await db.visits.count_documents({"site_id": site_id})
@@ -605,7 +605,7 @@ async def update_site(site_id: str, body: SiteUpdate, user=Depends(current_user)
         raise HTTPException(status_code=400, detail="Nothing to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.sites.update_one(
-        {"id": site_id, "owner_id": user["id"]},
+        {"id": site_id},
         {"$set": updates},
     )
     if result.matched_count == 0:
@@ -627,7 +627,7 @@ async def delete_site(site_id: str, user=Depends(current_user)):
 # ---------- Visits ----------
 @api_router.get("/sites/{site_id}/visits", response_model=List[Visit])
 async def list_visits(site_id: str, user=Depends(current_user)):
-    site = await db.sites.find_one({"id": site_id, "owner_id": user["id"]}, {"_id": 1})
+    site = await db.sites.find_one({"id": site_id}, {"_id": 1})
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     docs = await db.visits.find({"site_id": site_id}, {"_id": 0}).sort("sequence", 1).to_list(500)
@@ -643,7 +643,7 @@ async def list_visits(site_id: str, user=Depends(current_user)):
 
 @api_router.post("/sites/{site_id}/visits", response_model=Visit, status_code=201)
 async def create_visit(site_id: str, body: VisitCreate, user=Depends(current_user)):
-    site = await db.sites.find_one({"id": site_id, "owner_id": user["id"]}, {"_id": 1})
+    site = await db.sites.find_one({"id": site_id}, {"_id": 1})
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     existing = await db.visits.count_documents({"site_id": site_id})
@@ -666,7 +666,7 @@ async def create_visit(site_id: str, body: VisitCreate, user=Depends(current_use
 
 @api_router.get("/visits/{visit_id}", response_model=Visit)
 async def get_visit(visit_id: str, user=Depends(current_user)):
-    doc = await db.visits.find_one({"id": visit_id, "owner_id": user["id"]}, {"_id": 0})
+    doc = await db.visits.find_one({"id": visit_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Visit not found")
     pc = await db.photos.count_documents({"visit_id": visit_id})
@@ -690,7 +690,7 @@ async def update_visit(visit_id: str, body: VisitUpdate, user=Depends(current_us
         raise HTTPException(status_code=400, detail="Nothing to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.visits.update_one(
-        {"id": visit_id, "owner_id": user["id"]},
+        {"id": visit_id},
         {"$set": updates},
     )
     if result.matched_count == 0:
@@ -812,7 +812,7 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
 @api_router.get("/visits/{visit_id}/photos", response_model=List[Photo])
 async def list_photos(visit_id: str, user=Depends(current_user)):
     visit = await db.visits.find_one(
-        {"id": visit_id, "owner_id": user["id"]},
+        {"id": visit_id},
         {"_id": 1},
     )
 

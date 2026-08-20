@@ -93,10 +93,21 @@ export function makeApi(token: string, userId: string) {
 
   return {
     listDistricts: () => fetchAndCache(() => raw.listDistricts(token), K.districts, [] as any),
-    listSites: (params: any = {}) =>
-      params.q
-        ? raw.listSites(token, params)
-        : fetchAndCache(() => raw.listSites(token, params), K.sites(params.district), [] as any),
+    listSites: async (params: any = {}) => {
+      if (params.q) return raw.listSites(token, params);
+
+      const cacheKey = K.sites(params.district);
+
+      try {
+        const fresh = await raw.listSites(token, params);
+        await cacheSet(cacheKey, fresh);
+        return fresh;
+      } catch (e) {
+        const cached = await cacheGet<Site[]>(cacheKey);
+        if (cached) return cached;
+        throw e;
+      }
+    },
     getSite: (id: string) => fetchAndCache(() => raw.getSite(token, id), K.site(id)),
     createSite: async (body: any) => {
       if (isOnline()) {

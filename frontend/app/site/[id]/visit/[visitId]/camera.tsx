@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, Platform, Image as RNImage } from "react-native";
 import { Image } from "expo-image";
 import { CameraView, useCameraPermissions, CameraType } from "expo-camera";
 import * as Location from "expo-location";
@@ -33,6 +33,7 @@ export default function CameraScreen() {
   const [busy, setBusy] = useState(false);
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
   const [capturedBase64, setCapturedBase64] = useState<string | null>(null);
+  const [capturedImageLoaded, setCapturedImageLoaded] = useState(false);
   const [error, setError] = useState("");
 
   const cameraRef = useRef<CameraView>(null);
@@ -55,13 +56,15 @@ export default function CameraScreen() {
     if (!cameraRef.current || busy) return;
     setBusy(true);
     setError("");
+    setCapturedImageLoaded(false);
+    setCapturedImageLoaded(false);
 
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
 
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.7,
-        skipProcessing: true,
+        skipProcessing: false,
         ...(Platform.OS === "web" ? { base64: true } : {}),
       });
 
@@ -95,13 +98,17 @@ export default function CameraScreen() {
 
         const uri = await captureRef(composeRef, {
           format: "jpg",
-          quality: 0.7,
+          quality: 0.85,
           result: "tmpfile",
         });
 
         base64 = await FileSystem.readAsStringAsync(uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
+
+        if (!base64 || base64.length < 1000) {
+          throw new Error("Captured image data is invalid or empty");
+        }
       }
 
       const capturedAt = new Date().toISOString();
@@ -128,10 +135,20 @@ export default function CameraScreen() {
       setBusy(false);
       setCapturedUri(null);
       setCapturedBase64(null);
+      setCapturedImageLoaded(false);
+      setCapturedImageLoaded(false);
     }
   }, [api, visitId, siteId, capturedUri, capturedBase64, location, router]);
 
-  useEffect(() => { if (!capturedUri) return; const t = setTimeout(() => { finalizeUpload(); }, 300); return () => clearTimeout(t); }, [capturedUri, finalizeUpload]);
+  useEffect(() => {
+    if (!capturedUri || !capturedImageLoaded) return;
+
+    const t = setTimeout(() => {
+      finalizeUpload();
+    }, 100);
+
+    return () => clearTimeout(t);
+  }, [capturedUri, capturedImageLoaded, finalizeUpload]);
 
   if (!cameraPerm) return <View style={styles.blackFill}><ActivityIndicator color="#fff" /></View>;
   if (!cameraPerm.granted) return <SafeAreaView style={[styles.safe, { backgroundColor: colors.surface }]}><View style={styles.permWrap}><Ionicons name="camera-outline" size={48} color={colors.onSurface} /><Text style={[styles.permTitle, { color: colors.onSurface }]}>CAMERA PERMISSION REQUIRED</Text><Text style={[styles.permBody, { color: colors.muted }]}>We need camera access to capture site photos.</Text><Pressable style={[styles.permBtn, { backgroundColor: colors.brand }]} onPress={() => requestCameraPerm()}><Text style={[styles.permBtnText, { color: colors.onBrand }]}>GRANT ACCESS</Text></Pressable><Pressable style={[styles.permBtnGhost, { borderColor: colors.borderStrong }]} onPress={() => router.back()}><Text style={[styles.permBtnGhostText, { color: colors.onSurface }]}>CANCEL</Text></Pressable></View></SafeAreaView>;
@@ -142,7 +159,16 @@ export default function CameraScreen() {
   return (
     <View style={styles.root}>
       {!capturedUri && <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} />}
-      {capturedUri && <ViewShot ref={composeRef} style={StyleSheet.absoluteFill} options={{ format: "jpg", quality: 0.7 }}><Image source={{ uri: capturedUri }} style={StyleSheet.absoluteFill} contentFit="cover" /><OverlayHUD dateStr={dateStr} timeStr={timeStr} gpsStr={gpsStr} colors={colors} /></ViewShot>}
+      {capturedUri && <ViewShot ref={composeRef} style={StyleSheet.absoluteFill} options={{ format: "jpg", quality: 0.85 }}><RNImage
+            source={{ uri: capturedUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            onLoad={() => setCapturedImageLoaded(true)}
+            onError={() => {
+              setError("Unable to load captured image");
+              setBusy(false);
+            }}
+          /><OverlayHUD dateStr={dateStr} timeStr={timeStr} gpsStr={gpsStr} colors={colors} /></ViewShot>}
       {!capturedUri && <OverlayHUD dateStr={dateStr} timeStr={timeStr} gpsStr={gpsStr} colors={colors} />}
 
       <SafeAreaView pointerEvents="box-none" style={styles.topBarWrap} edges={["top"]}>
