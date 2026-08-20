@@ -126,7 +126,7 @@ export default function VisitDetailScreen() {
           <Text style={[styles.sectionCount, { color: colors.muted }]}>{photos.length} TOTAL</Text>
         </View>
 
-        {photos.length === 0 ? <View style={[styles.emptyGallery, { borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary }]}><Ionicons name="camera-outline" size={44} color={colors.onSurface} /><Text style={[styles.emptyGalleryTitle, { color: colors.onSurface }]}>NO PHOTOS CAPTURED</Text><Text style={[styles.emptyGalleryBody, { color: colors.muted }]}>Capture a photo — date, time and GPS will be burned onto the image.</Text></View> : <View style={styles.grid}>{photos.map(p => <Pressable key={p.id} style={styles.tile} onPress={() => setViewer(p)}><Image source={{ uri: `data:image/jpeg;base64,${p.image_base64}` }} style={styles.tileImg} contentFit="cover" />{p._pending ? <View style={[styles.tilePendingBadge, { backgroundColor: colors.brandSecondary }]}><Ionicons name="cloud-offline" size={12} color={colors.onSurface} /><Text style={[styles.tilePendingText, { color: colors.onSurface }]}>PENDING</Text></View> : null}</Pressable>)}</View>}
+        {photos.length === 0 ? <View style={[styles.emptyGallery, { borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary }]}><Ionicons name="camera-outline" size={44} color={colors.onSurface} /><Text style={[styles.emptyGalleryTitle, { color: colors.onSurface }]}>NO PHOTOS CAPTURED</Text><Text style={[styles.emptyGalleryBody, { color: colors.muted }]}>Capture a photo — date, time and GPS will be burned onto the image.</Text></View> : <View style={styles.grid}>{photos.map(p => <Pressable key={p.id} style={styles.tile} onPress={() => setViewer(p)}><Image source={{ uri: p.image_base64.startsWith("data:") ? p.image_base64 : `data:image/jpeg;base64,${p.image_base64}` }} style={styles.tileImg} contentFit="cover" />{p._pending ? <View style={[styles.tilePendingBadge, { backgroundColor: colors.brandSecondary }]}><Ionicons name="cloud-offline" size={12} color={colors.onSurface} /><Text style={[styles.tilePendingText, { color: colors.onSurface }]}>PENDING</Text></View> : null}</Pressable>)}</View>}
       </ScrollView>
 
       <View style={[styles.captureBarWrap, { borderTopColor: colors.borderStrong, backgroundColor: colors.surface }]}>
@@ -168,7 +168,7 @@ export default function VisitDetailScreen() {
       <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
         <View style={[styles.viewerBackdrop, { backgroundColor: "rgba(0,0,0,0.95)" }]}>
           <Pressable style={styles.viewerClose} onPress={() => setViewer(null)} hitSlop={16}><Ionicons name="close" size={28} color={colors.onSurfaceInverse} /></Pressable>
-          {viewer && <Image source={{ uri: `data:image/jpeg;base64,${viewer.image_base64}` }} style={styles.viewerImg} contentFit="contain" />}
+          {viewer && <Image source={{ uri: viewer.image_base64.startsWith("data:") ? viewer.image_base64 : `data:image/jpeg;base64,${viewer.image_base64}` }} style={styles.viewerImg} contentFit="contain" />}
         </View>
       </Modal>
 
