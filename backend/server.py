@@ -3,6 +3,7 @@ import uuid
 import logging
 import base64
 import asyncio
+import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
@@ -809,7 +810,6 @@ ROUGH RECOMMENDATIONS:
             if text.startswith("json"):
                 text = text[4:].strip()
 
-        import json
         result = json.loads(text)
 
         return AIReportResponse(
