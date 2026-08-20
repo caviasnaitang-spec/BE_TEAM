@@ -10,12 +10,16 @@ from typing import Annotated, List, Optional
 import bcrypt
 import boto3
 import jwt
+from openai import OpenAI
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -225,6 +229,17 @@ class Visit(BaseModel):
     photo_count: int = 0
     created_at: str
     updated_at: str
+
+class AIReportRequest(BaseModel):
+    summary: str = ""
+    issues: str = ""
+    recommendations: str = ""
+
+
+class AIReportResponse(BaseModel):
+    summary: str
+    issues: str
+    recommendations: str
 
 class PhotoCreate(BaseModel):
     image_base64: str
@@ -708,6 +723,114 @@ async def delete_visit(visit_id: str, user=Depends(current_user)):
         raise HTTPException(status_code=404, detail="Visit not found")
     await db.photos.delete_many({"visit_id": visit_id})
     return None
+
+# ---------- AI Report Assistant ----------
+@api_router.post(
+    "/visits/{visit_id}/ai-report",
+    response_model=AIReportResponse,
+)
+async def generate_ai_report(
+    visit_id: str,
+    body: AIReportRequest,
+    user=Depends(current_user),
+):
+    if not openai_client:
+        raise HTTPException(
+            status_code=503,
+            detail="AI report assistant is not configured",
+        )
+
+    visit = await db.visits.find_one(
+        {"id": visit_id, "owner_id": user["id"]},
+        {"_id": 0},
+    )
+
+    if not visit:
+        raise HTTPException(
+            status_code=404,
+            detail="Visit not found",
+        )
+
+    summary = body.summary.strip()
+    issues = body.issues.strip()
+    recommendations = body.recommendations.strip()
+
+    if not summary and not issues and not recommendations:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter some report notes before using AI Assist",
+        )
+
+    prompt = f"""
+You are an assistant for a professional field inspection application.
+
+Rewrite the field worker's rough notes into a clear, concise,
+professional site-visit report.
+
+IMPORTANT RULES:
+- Use ONLY information contained in the supplied notes.
+- Do NOT invent facts.
+- Do NOT invent measurements, quantities, materials, dates, people,
+  technical specifications, causes, defects, or completed work.
+- Do NOT make assumptions about anything not stated.
+- Preserve uncertainty when the original note is uncertain.
+- Improve grammar, spelling, clarity, and professional wording.
+- Keep the report factual and suitable for an engineering/site visit record.
+- Do not add greetings or unnecessary commentary.
+- Return ONLY valid JSON with exactly these keys:
+  "summary", "issues", "recommendations".
+
+ROUGH SUMMARY:
+{summary}
+
+ROUGH ISSUES FOUND:
+{issues}
+
+ROUGH RECOMMENDATIONS:
+{recommendations}
+"""
+
+    try:
+        response = await asyncio.to_thread(
+            openai_client.responses.create,
+            model="gpt-5.6-luna",
+            input=prompt,
+        )
+
+        text = (response.output_text or "").strip()
+
+        if not text:
+            raise ValueError("AI returned an empty response")
+
+        # Remove accidental markdown code fences if the model adds them.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+
+        import json
+        result = json.loads(text)
+
+        return AIReportResponse(
+            summary=str(result.get("summary", "")).strip(),
+            issues=str(result.get("issues", "")).strip(),
+            recommendations=str(result.get("recommendations", "")).strip(),
+        )
+
+    except json.JSONDecodeError as exc:
+        logger.exception("AI report returned invalid JSON")
+        raise HTTPException(
+            status_code=502,
+            detail="AI returned an invalid report",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("AI report generation failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not generate AI report",
+        ) from exc
+
 
 # ---------- Photos ----------
 @api_router.post("/visits/{visit_id}/photos", response_model=Photo, status_code=201)

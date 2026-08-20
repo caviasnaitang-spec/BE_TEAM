@@ -59,6 +59,29 @@ export const raw = {
   createVisit: (token: string, siteId: string, body: any) => request<Visit>(`/api/sites/${siteId}/visits`, { method: "POST", body: JSON.stringify(body) }, token),
   getVisit: (token: string, visitId: string) => request<Visit>(`/api/visits/${visitId}`, {}, token),
   updateVisit: (token: string, visitId: string, body: any) => request<Visit>(`/api/visits/${visitId}`, { method: "PATCH", body: JSON.stringify(body) }, token),
+
+  generateAIReport: (
+    token: string,
+    visitId: string,
+    body: {
+      summary: string;
+      issues: string;
+      recommendations: string;
+    }
+  ) =>
+    request<{
+      summary: string;
+      issues: string;
+      recommendations: string;
+    }>(
+      `/api/visits/${visitId}/ai-report`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      token
+    ),
+
   deleteVisit: (token: string, visitId: string) => request<null>(`/api/visits/${visitId}`, { method: "DELETE" }, token),
   listPhotos: (token: string, visitId: string) => request<Photo[]>(`/api/visits/${visitId}/photos`, {}, token),
   addPhoto: (token: string, visitId: string, body: any) => request<Photo>(`/api/visits/${visitId}/photos`, { method: "POST", body: JSON.stringify(body) }, token),
@@ -159,6 +182,16 @@ export function makeApi(token: string, userId: string) {
     },
     listVisits: (siteId: string) => fetchAndCache(() => raw.listVisits(token, siteId), K.visits(siteId), [] as any),
     getVisit: (visitId: string) => fetchAndCache(() => raw.getVisit(token, visitId), K.visit(visitId)),
+
+    generateAIReport: (
+      visitId: string,
+      body: {
+        summary: string;
+        issues: string;
+        recommendations: string;
+      }
+    ) => raw.generateAIReport(token, visitId, body),
+
     createVisit: async (siteId: string, body: any) => {
       if (isOnline() && !siteId.startsWith("local-")) {
         try { const created = await raw.createVisit(token, siteId, body); await cacheDelete(K.visits(siteId)); await cacheDelete(K.site(siteId)); notifyChange(); return created; } catch {}

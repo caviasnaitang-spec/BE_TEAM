@@ -5,6 +5,8 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 import { useSession } from "@/src/session";
 import { Photo, Visit } from "@/src/api";
 import { useTheme, spacing, sizes, type } from "@/src/theme";
@@ -22,11 +24,13 @@ export default function VisitDetailScreen() {
   const router = useRouter();
   const [visit, setVisit] = useState<Visit | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [site, setSite] = useState<{ name: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewer, setViewer] = useState<Photo | null>(null);
   const [error, setError] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [progressDraft, setProgressDraft] = useState("");
   const [issuesDraft, setIssuesDraft] = useState("");
@@ -44,12 +48,273 @@ export default function VisitDetailScreen() {
   const load = useCallback(async () => {
     if (!api || !visitId) return;
     setError("");
-    try { const [v, p] = await Promise.all([api.getVisit(visitId), api.listPhotos(visitId)]); setVisit(v); setPhotos(p); }
+    try {
+      const [v, p, siteData] = await Promise.all([
+        api.getVisit(visitId),
+        api.listPhotos(visitId),
+        api.getSite(siteId),
+      ]);
+      setVisit(v);
+      setPhotos(p);
+      setSite(siteData);
+    }
     catch (e: any) { setError(e?.message || "Failed to load visit"); }
     finally { setLoading(false); }
-  }, [api, visitId]);
+  }, [api, visitId, siteId]);
 
   useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
+
+  const exportPdf = async () => {
+    if (!visit) return;
+
+    try {
+      setSaving(true);
+
+      const escapeHtml = (value: string | null | undefined) =>
+        String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+
+      const formatDate = (value: string | undefined) => {
+        if (!value) return "";
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return value;
+        return d.toLocaleDateString();
+      };
+
+      const photosHtml = photos.length
+        ? photos.map((photo, index) => {
+            const image = photo.image_base64.startsWith("data:")
+              ? photo.image_base64
+              : `data:image/jpeg;base64,${photo.image_base64}`;
+
+            const gps =
+              photo.latitude !== null && photo.longitude !== null
+                ? `${photo.latitude.toFixed(6)}, ${photo.longitude.toFixed(6)}`
+                : "GPS unavailable";
+
+            return `
+              <div class="photo">
+                <div class="photo-number">PHOTO ${index + 1}</div>
+                <img src="${image}" />
+                <div class="photo-meta">
+                  <strong>DATE:</strong> ${escapeHtml(formatDate(photo.captured_at))}
+                  &nbsp;&nbsp;
+                  <strong>GPS:</strong> ${escapeHtml(gps)}
+                  ${
+                    photo.accuracy !== null
+                      ? `&nbsp;&nbsp;<strong>ACCURACY:</strong> ±${photo.accuracy.toFixed(0)}m`
+                      : ""
+                  }
+                </div>
+              </div>
+            `;
+          }).join("")
+        : `<p class="muted">No photos captured.</p>`;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <style>
+            @page {
+              size: A4;
+              margin: 18mm;
+            }
+
+            body {
+              font-family: Arial, sans-serif;
+              color: #111;
+              margin: 0;
+              font-size: 11pt;
+            }
+
+            .header {
+              border-bottom: 3px solid #111;
+              padding-bottom: 12px;
+              margin-bottom: 20px;
+            }
+
+            .title {
+              font-size: 22pt;
+              font-weight: 900;
+              margin: 0 0 5px 0;
+              letter-spacing: 1px;
+            }
+
+            .site {
+              font-size: 16pt;
+              font-weight: bold;
+              margin-top: 8px;
+            }
+
+            .visit {
+              color: #555;
+              margin-top: 5px;
+            }
+
+            .section {
+              margin-top: 18px;
+              page-break-inside: avoid;
+            }
+
+            .label {
+              font-size: 9pt;
+              font-weight: bold;
+              letter-spacing: 1px;
+              color: #666;
+              margin-bottom: 5px;
+            }
+
+            .value {
+              line-height: 1.5;
+              white-space: pre-wrap;
+            }
+
+            .progress {
+              font-size: 16pt;
+              font-weight: bold;
+            }
+
+            .photo {
+              margin-top: 20px;
+              page-break-inside: avoid;
+              border: 1px solid #ccc;
+              padding: 8px;
+            }
+
+            .photo-number {
+              font-size: 9pt;
+              font-weight: bold;
+              margin-bottom: 6px;
+            }
+
+            .photo img {
+              width: 100%;
+              max-height: 175mm;
+              object-fit: contain;
+            }
+
+            .photo-meta {
+              font-size: 8pt;
+              margin-top: 7px;
+              color: #444;
+              line-height: 1.5;
+            }
+
+            .muted {
+              color: #777;
+            }
+
+            .footer {
+              margin-top: 25px;
+              padding-top: 8px;
+              border-top: 1px solid #ccc;
+              font-size: 8pt;
+              color: #777;
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="header">
+            <div class="title">FIELD VISIT REPORT</div>
+            <div class="site">${escapeHtml(site?.name || "SITE")}</div>
+            <div class="visit">
+              VISIT #${visit.sequence || 1}
+              &nbsp;&nbsp;|&nbsp;&nbsp;
+              ${escapeHtml(formatDate(visit.created_at))}
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="label">PROGRESS</div>
+            <div class="progress">${visit.progress_pct ?? 0}%</div>
+          </div>
+
+          <div class="section">
+            <div class="label">SUMMARY</div>
+            <div class="value">${escapeHtml(visit.note || "No summary recorded.")}</div>
+          </div>
+
+          <div class="section">
+            <div class="label">ISSUES FOUND</div>
+            <div class="value">${escapeHtml(visit.issues || "No issues reported.")}</div>
+          </div>
+
+          <div class="section">
+            <div class="label">RECOMMENDATIONS</div>
+            <div class="value">${escapeHtml(visit.recommendations || "No recommendations provided.")}</div>
+          </div>
+
+          <div class="section">
+            <div class="label">GEOTAGGED PHOTOS — ${photos.length} TOTAL</div>
+            ${photosHtml}
+          </div>
+
+          <div class="footer">
+            FieldMonitor — Field Visit Report
+          </div>
+        </body>
+        </html>
+      `;
+
+      const result = await Print.printToFileAsync({ html });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Share Visit Report",
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        setError("PDF created, but sharing is unavailable on this device.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "PDF export failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateAIReport = async () => {
+    if (!api || !visit) return;
+
+    if (!noteDraft.trim() && !issuesDraft.trim() && !recsDraft.trim()) {
+      setError("Enter some notes before using AI Assist.");
+      return;
+    }
+
+    setAiLoading(true);
+    setError("");
+
+    try {
+      const result = await api.generateAIReport(visit.id, {
+        summary: noteDraft.trim(),
+        issues: issuesDraft.trim(),
+        recommendations: recsDraft.trim(),
+      });
+
+      setNoteDraft(result.summary);
+      setIssuesDraft(result.issues);
+      setRecsDraft(result.recommendations);
+
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
+      ).catch(() => {});
+    } catch (e: any) {
+      setError(e?.message || "AI report generation failed");
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Error
+      ).catch(() => {});
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const saveReport = async () => {
     if (!api || !visit) return;
@@ -119,6 +384,22 @@ export default function VisitDetailScreen() {
             <Text style={[styles.reportSectionLabel, { color: colors.muted }]}>RECOMMENDATIONS</Text>
             <Text style={[styles.noteText, { color: colors.onSurface }]}>{visit.recommendations || "No recommendations provided."}</Text>
           </View>
+
+          <Pressable
+            onPress={exportPdf}
+            disabled={saving}
+            style={({ pressed }) => [
+              styles.exportPdfBtn,
+              { borderColor: colors.borderStrong, backgroundColor: colors.surface },
+              pressed && { opacity: 0.7 },
+              saving && { opacity: 0.5 },
+            ]}
+          >
+            <Ionicons name="document-text-outline" size={18} color={colors.onSurface} />
+            <Text style={[styles.exportPdfBtnText, { color: colors.onSurface }]}>
+              EXPORT PDF →
+            </Text>
+          </Pressable>
         </View>
 
         <View style={[styles.sectionHeader, { borderColor: colors.borderStrong }]}>
@@ -174,7 +455,11 @@ export default function VisitDetailScreen() {
 
       {/* Report editor modal */}
       <Modal visible={reportOpen} transparent animationType="fade" onRequestClose={() => setReportOpen(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.reportBackdrop, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
+          style={[styles.reportBackdrop, { backgroundColor: "rgba(0,0,0,0.6)" }]}
+        >
           <Pressable style={{ flex: 1 }} onPress={() => setReportOpen(false)} />
           <View style={[styles.reportSheet, { backgroundColor: colors.surface, borderTopColor: colors.borderStrong }]}>
             <View style={[styles.reportSheetHeader, { borderBottomColor: colors.borderStrong }]}>
@@ -190,6 +475,26 @@ export default function VisitDetailScreen() {
               <TextInput value={issuesDraft} onChangeText={setIssuesDraft} placeholder="Any problems, delays, quality concerns..." placeholderTextColor={colors.muted} multiline textAlignVertical="top" style={[styles.formInput, styles.formInputMulti, { borderColor: colors.borderStrong, color: colors.onSurface }]} />
               <Text style={[styles.formLabel, { color: colors.onSurface }]}>RECOMMENDATIONS</Text>
               <TextInput value={recsDraft} onChangeText={setRecsDraft} placeholder="What should be done before the next visit..." placeholderTextColor={colors.muted} multiline textAlignVertical="top" style={[styles.formInput, styles.formInputMulti, { borderColor: colors.borderStrong, color: colors.onSurface }]} />
+
+              <Pressable
+                onPress={generateAIReport}
+                disabled={saving || aiLoading}
+                style={({ pressed }) => [
+                  styles.aiReportBtn,
+                  { borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary },
+                  pressed && { opacity: 0.7 },
+                  (saving || aiLoading) && { opacity: 0.5 },
+                ]}
+              >
+                {aiLoading ? (
+                  <ActivityIndicator size="small" color={colors.onSurface} />
+                ) : (
+                  <Text style={[styles.aiReportBtnText, { color: colors.onSurface }]}>
+                    ✨ AI ASSIST REPORT
+                  </Text>
+                )}
+              </Pressable>
+
               <Pressable onPress={saveReport} disabled={saving} style={({ pressed }) => [styles.reportSaveBtn, { backgroundColor: colors.brand }, pressed && { backgroundColor: "#CC4400" }, saving && { opacity: 0.6 }]}>
                 {saving ? <ActivityIndicator color={colors.onBrand} /> : <Text style={[styles.reportSaveBtnText, { color: colors.onBrand }]}>SAVE REPORT →</Text>}
               </Pressable>
@@ -216,6 +521,35 @@ const makeStyles = (colors: any) => StyleSheet.create({
   noteWrap: { marginTop: spacing.lg, marginHorizontal: spacing.lg, borderWidth: 2, padding: spacing.md, gap: 6 },
   noteLabel: { fontFamily: type.mono, fontSize: sizes.sm - 1, letterSpacing: 1, fontWeight: "800" },
   noteText: { fontSize: sizes.base, lineHeight: 20 },
+  aiReportBtn: {
+    minHeight: 52,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.md,
+  },
+  aiReportBtnText: {
+    fontFamily: type.mono,
+    fontSize: sizes.sm,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+  exportPdfBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 2,
+    paddingVertical: 13,
+    marginTop: spacing.md,
+  },
+  exportPdfBtnText: {
+    fontFamily: type.mono,
+    fontSize: sizes.sm,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
   reportHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   editReportBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 2, paddingHorizontal: 8, paddingVertical: 4 },
   editReportBtnText: { fontFamily: type.mono, fontSize: sizes.sm - 1, fontWeight: "900", letterSpacing: 1 },
@@ -227,7 +561,7 @@ const makeStyles = (colors: any) => StyleSheet.create({
   progressBar: { height: 10, borderWidth: 2 },
   progressBarFill: { height: "100%" },
   reportBackdrop: { flex: 1, justifyContent: "flex-end" },
-  reportSheet: { borderTopWidth: 2, maxHeight: "88%" },
+  reportSheet: { borderTopWidth: 2, maxHeight: "82%" },
   reportSheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md, borderBottomWidth: 2 },
   reportSheetTitle: { fontFamily: type.mono, fontWeight: "900", letterSpacing: 1 },
   reportSheetBody: { padding: spacing.lg, gap: spacing.sm, paddingBottom: spacing.xxl },
