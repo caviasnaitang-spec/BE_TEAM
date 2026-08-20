@@ -5,6 +5,7 @@ import { CameraView, useCameraPermissions, CameraType } from "expo-camera";
 import * as Location from "expo-location";
 import ViewShot, { captureRef } from "react-native-view-shot";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -102,7 +103,19 @@ export default function CameraScreen() {
           result: "tmpfile",
         });
 
-        base64 = await FileSystem.readAsStringAsync(uri, {
+        // Resize/compress the final geotagged image before converting
+        // it to Base64. This prevents very large image payloads that
+        // can fail to render reliably on iPhone/Android.
+        const processed = await ImageManipulator.manipulateAsync(
+          uri,
+          [{ resize: { width: 1600 } }],
+          {
+            compress: 0.78,
+            format: ImageManipulator.SaveFormat.JPEG,
+          }
+        );
+
+        base64 = await FileSystem.readAsStringAsync(processed.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
 

@@ -15,3 +15,4 @@ email-validator
 boto3
 openai==3.3.1
 google-genai
+Pillow

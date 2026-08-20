@@ -84,6 +84,7 @@ export const raw = {
 
   deleteVisit: (token: string, visitId: string) => request<null>(`/api/visits/${visitId}`, { method: "DELETE" }, token),
   listPhotos: (token: string, visitId: string) => request<Photo[]>(`/api/visits/${visitId}/photos`, {}, token),
+  listFullPhotos: (token: string, visitId: string) => request<Photo[]>(`/api/visits/${visitId}/photos/full`, {}, token),
   addPhoto: (token: string, visitId: string, body: any) => request<Photo>(`/api/visits/${visitId}/photos`, { method: "POST", body: JSON.stringify(body) }, token),
   deletePhoto: (token: string, photoId: string) => request<null>(`/api/photos/${photoId}`, { method: "DELETE" }, token),
   adminUsers: (token: string) => request<any[]>(`/api/admin/users`, {}, token),
@@ -221,7 +222,12 @@ export function makeApi(token: string, userId: string) {
       if (!visitId.startsWith("local-")) await queuePush({ kind: "update-visit", visitId, body, createdAt: new Date().toISOString() });
       return merged;
     },
-    listPhotos: (visitId: string) => fetchAndCache(() => raw.listPhotos(token, visitId), K.visitPhotos(visitId), [] as any),
+    listPhotos: (visitId: string) =>
+      fetchAndCache(() => raw.listPhotos(token, visitId), K.visitPhotos(visitId), [] as any),
+
+    // Full-resolution photos are fetched only when generating a PDF.
+    listFullPhotos: (visitId: string) =>
+      raw.listFullPhotos(token, visitId),
     addPhoto: async (visitId: string, body: any, siteId?: string) => {
       if (isOnline() && !visitId.startsWith("local-")) {
         try { const created = await raw.addPhoto(token, visitId, body); const list = (await cacheGet<Photo[]>(K.visitPhotos(visitId))) || []; await cacheSet(K.visitPhotos(visitId), [created, ...list]); notifyChange(); return created; } catch {}

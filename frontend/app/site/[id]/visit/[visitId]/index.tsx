@@ -49,26 +49,49 @@ export default function VisitDetailScreen() {
     if (!api || !visitId) return;
     setError("");
     try {
-      const [v, p, siteData] = await Promise.all([
+      // Load the main visit/site data first so the screen can appear quickly.
+      const [v, siteData] = await Promise.all([
         api.getVisit(visitId),
-        api.listPhotos(visitId),
         api.getSite(siteId),
       ]);
+
       setVisit(v);
-      setPhotos(p);
       setSite(siteData);
+      setLoading(false);
+
+      // Load photos separately in the background.
+      try {
+        const p = await api.listPhotos(visitId);
+        setPhotos(p);
+      } catch (photoError) {
+        console.warn("Photo loading failed:", photoError);
+      }
     }
-    catch (e: any) { setError(e?.message || "Failed to load visit"); }
-    finally { setLoading(false); }
+    catch (e: any) {
+      setError(e?.message || "Failed to load visit");
+      setLoading(false);
+    }
   }, [api, visitId, siteId]);
 
-  useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const exportPdf = async () => {
     if (!visit) return;
 
     try {
       setSaving(true);
+
+      // Fetch original full-resolution photos only when exporting the PDF.
+      // Normal visit/gallery loading uses lightweight thumbnails.
+      const fullPhotos = api
+        ? await api.listFullPhotos(visitId)
+        : photos;
+
+      const pdfPhotos = fullPhotos.length ? fullPhotos : photos;
 
       const escapeHtml = (value: string | null | undefined) =>
         String(value || "")
@@ -85,8 +108,8 @@ export default function VisitDetailScreen() {
         return d.toLocaleDateString();
       };
 
-      const photosHtml = photos.length
-        ? photos.map((photo, index) => {
+      const photosHtml = pdfPhotos.length
+        ? pdfPhotos.map((photo, index) => {
             const image = photo.image_base64.startsWith("data:")
               ? photo.image_base64
               : `data:image/jpeg;base64,${photo.image_base64}`;

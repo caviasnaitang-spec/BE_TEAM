@@ -34,7 +34,11 @@ export default function SiteDetailScreen() {
     finally { setLoading(false); }
   }, [api, id]);
 
-  useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const toggleStatus = async () => {
     if (!api || !site) return;

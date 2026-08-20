@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import base64
+from io import BytesIO
 import asyncio
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import bcrypt
 import boto3
 import jwt
 from google import genai
+from PIL import Image
 from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
@@ -838,6 +840,52 @@ ROUGH RECOMMENDATIONS:
 
 
 # ---------- Photos ----------
+# ---------- Full-resolution photos ----------
+@api_router.get("/visits/{visit_id}/photos/full", response_model=List[Photo])
+async def list_full_photos(visit_id: str, user=Depends(current_user)):
+    visit = await db.visits.find_one(
+        {"id": visit_id},
+        {"_id": 1},
+    )
+
+    if not visit:
+        raise HTTPException(status_code=404, detail="Visit not found")
+
+    docs = await db.photos.find(
+        {"visit_id": visit_id},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(1000)
+
+    result = []
+
+    for doc in docs:
+        if doc.get("r2_key"):
+            try:
+                def download_original():
+                    obj = r2_client.get_object(
+                        Bucket=R2_BUCKET_NAME,
+                        Key=doc["r2_key"],
+                    )
+                    return obj["Body"].read()
+
+                image_bytes = await asyncio.to_thread(download_original)
+
+                encoded = base64.b64encode(image_bytes).decode("utf-8")
+                doc["image_base64"] = "data:image/jpeg;base64," + encoded
+
+            except Exception:
+                logger.exception(
+                    "Failed to read full photo from R2: %s",
+                    doc.get("r2_key"),
+                )
+                continue
+
+        if doc.get("image_base64"):
+            result.append(Photo(**doc))
+
+    return result
+
+
 @api_router.post("/visits/{visit_id}/photos", response_model=Photo, status_code=201)
 async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)):
     visit = await db.visits.find_one(
@@ -875,6 +923,28 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
 
     photo_id = str(uuid.uuid4())
     object_key = f"visits/{visit_id}/{photo_id}.jpg"
+    thumbnail_key = f"visits/{visit_id}/{photo_id}_thumb.jpg"
+
+    # Create a lightweight thumbnail for fast gallery loading.
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        image = image.convert("RGB")
+        image.thumbnail((600, 600), Image.Resampling.LANCZOS)
+
+        thumbnail_buffer = BytesIO()
+        image.save(
+            thumbnail_buffer,
+            format="JPEG",
+            quality=70,
+            optimize=True,
+        )
+        thumbnail_bytes = thumbnail_buffer.getvalue()
+    except Exception as exc:
+        logger.exception("Thumbnail generation failed")
+        raise HTTPException(
+            status_code=400,
+            detail="Could not process image",
+        ) from exc
 
     try:
         await asyncio.to_thread(
@@ -882,6 +952,14 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
             Bucket=R2_BUCKET_NAME,
             Key=object_key,
             Body=image_bytes,
+            ContentType="image/jpeg",
+        )
+
+        await asyncio.to_thread(
+            r2_client.put_object,
+            Bucket=R2_BUCKET_NAME,
+            Key=thumbnail_key,
+            Body=thumbnail_bytes,
             ContentType="image/jpeg",
         )
     except Exception as exc:
@@ -896,6 +974,7 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
         "site_id": visit["site_id"],
         "visit_id": visit_id,
         "r2_key": object_key,
+        "thumbnail_r2_key": thumbnail_key,
         "latitude": body.latitude,
         "longitude": body.longitude,
         "accuracy": body.accuracy,
@@ -913,8 +992,13 @@ async def add_photo(visit_id: str, body: PhotoCreate, user=Depends(current_user)
                 Bucket=R2_BUCKET_NAME,
                 Key=object_key,
             )
+            await asyncio.to_thread(
+                r2_client.delete_object,
+                Bucket=R2_BUCKET_NAME,
+                Key=thumbnail_key,
+            )
         except Exception:
-            logger.exception("Failed to clean up R2 object")
+            logger.exception("Failed to clean up R2 photo objects")
 
         raise HTTPException(
             status_code=500,
@@ -959,10 +1043,14 @@ async def list_photos(visit_id: str, user=Depends(current_user)):
     for doc in docs:
         if doc.get("r2_key"):
             try:
+                # Use the lightweight thumbnail for normal gallery/list loading.
+                # Fall back to the original for older photos that have no thumbnail.
+                download_key = doc.get("thumbnail_r2_key") or doc["r2_key"]
+
                 def download_r2():
                     obj = r2_client.get_object(
                         Bucket=R2_BUCKET_NAME,
-                        Key=doc["r2_key"],
+                        Key=download_key,
                     )
                     return obj["Body"].read()
 
@@ -977,11 +1065,37 @@ async def list_photos(visit_id: str, user=Depends(current_user)):
                 )
 
             except Exception:
-                logger.exception(
-                    "Failed to read photo from R2: %s",
-                    doc.get("r2_key"),
-                )
-                continue
+                # If a thumbnail is missing, try the original image.
+                if doc.get("thumbnail_r2_key"):
+                    try:
+                        def download_original():
+                            obj = r2_client.get_object(
+                                Bucket=R2_BUCKET_NAME,
+                                Key=doc["r2_key"],
+                            )
+                            return obj["Body"].read()
+
+                        image_bytes = await asyncio.to_thread(download_original)
+
+                        encoded = base64.b64encode(
+                            image_bytes
+                        ).decode("utf-8")
+
+                        doc["image_base64"] = (
+                            "data:image/jpeg;base64," + encoded
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to read photo from R2: %s",
+                            doc.get("r2_key"),
+                        )
+                        continue
+                else:
+                    logger.exception(
+                        "Failed to read photo from R2: %s",
+                        doc.get("r2_key"),
+                    )
+                    continue
 
         # Keep compatibility with old MongoDB photos.
         if doc.get("image_base64"):

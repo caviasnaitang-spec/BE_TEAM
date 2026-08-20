@@ -68,7 +68,11 @@ export default function DistrictsScreen() {
     finally { setLoading(false); setRefreshing(false); }
   }, [api]);
 
-  useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const totalSites = items.reduce((n, d) => n + d.site_count, 0);
   const activeSites = items.reduce((n, d) => n + d.active_count, 0);
