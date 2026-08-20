@@ -740,8 +740,9 @@ async def generate_ai_report(
             detail="AI report assistant is not configured",
         )
 
+    # Visits are shared across the FieldMonitor team.
     visit = await db.visits.find_one(
-        {"id": visit_id, "owner_id": user["id"]},
+        {"id": visit_id},
         {"_id": 0},
     )
 
