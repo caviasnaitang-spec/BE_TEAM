@@ -350,7 +350,9 @@ async def _visit_counts_by_site(site_ids: List[str]) -> dict:
     return counts
 
 async def _seed_sites_for_user(user_id: str) -> int:
-    if await db.sites.count_documents({"owner_id": user_id}) > 0:
+    # Sites are shared across the FieldMonitor team.
+    # Only seed the database when no sites exist yet.
+    if await db.sites.count_documents({}) > 0:
         return 0
     now = datetime.now(timezone.utc).isoformat()
     docs = []
