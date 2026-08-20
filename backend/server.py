@@ -770,7 +770,13 @@ async def generate_ai_report(
 You are an assistant for a professional field inspection application.
 
 Rewrite the field worker's rough notes into a clear, concise,
-professional site-visit report.
+professional report specifically about the activity identified by the
+visit title.
+
+The visit title is the primary activity/context of this report.
+If the visit title is "Centreline Marking", for example, the report
+must discuss the centreline marking activity rather than describing
+the visit generically as a field visit.
 
 IMPORTANT RULES:
 - Use ONLY information contained in the supplied notes.
@@ -782,8 +788,13 @@ IMPORTANT RULES:
 - Improve grammar, spelling, clarity, and professional wording.
 - Keep the report factual and suitable for an engineering/site visit record.
 - Do not add greetings or unnecessary commentary.
+- Keep the wording specific to the stated visit activity.
+- Do not change the meaning of the visit title.
 - Return ONLY valid JSON with exactly these keys:
   "summary", "issues", "recommendations".
+
+VISIT ACTIVITY / TITLE:
+{visit.get("title") or "Field Visit"}
 
 ROUGH SUMMARY:
 {summary}

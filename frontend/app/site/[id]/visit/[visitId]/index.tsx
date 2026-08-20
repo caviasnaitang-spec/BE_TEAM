@@ -245,7 +245,7 @@ export default function VisitDetailScreen() {
 
         <body>
           <div class="header">
-            <div class="title">FIELD VISIT REPORT</div>
+            <div class="title">${escapeHtml((visit.title || "Field Visit").toUpperCase())} REPORT</div>
             <div class="site">${escapeHtml(site?.name || "SITE")}</div>
             <div class="visit">
               VISIT #${visit.sequence || 1}
@@ -280,7 +280,7 @@ export default function VisitDetailScreen() {
           </div>
 
           <div class="footer">
-            FieldMonitor — Field Visit Report
+            FieldMonitor — ${escapeHtml((visit.title || "Field Visit").toUpperCase())} Report
           </div>
         </body>
         </html>
